@@ -1,0 +1,5 @@
+# 基因 · Inspiration 占位
+
+本目录用于存放基因/蛋白/通路相关素材(NCBI Gene、UniProt、Ensembl、KEGG 映射等)。
+命名约定:`YYYYMMDD-基因名-主题.md`,例:`20260824-EGFR-耐药机制.md`
+父级索引:[[../00-索引]]

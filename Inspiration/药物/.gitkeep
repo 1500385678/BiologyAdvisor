@@ -1,0 +1,5 @@
+# 药物 · Inspiration 占位
+
+本目录用于存放已上市/在研药物、靶点、Mechanism of Action、ChEMBL/DrugBank 映射素材。
+命名约定:`YYYYMMDD-药物名-主题.md`,例:`20260824-奥希替尼-EGFR-T790M.md`
+父级索引:[[../00-索引]]
