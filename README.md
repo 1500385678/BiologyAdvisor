@@ -1,5 +1,4 @@
 # BiologyAdvisor
-<<<<<<< HEAD
 
 > 17-生物-Biology 行业 Web 项目 · 内部代号 BiologyAdvisor
 
@@ -13,6 +12,3 @@
 ## 自动化
 - T4 每日 02:00 检查项目并更新开发计划
 - T5 每日 03:00 完成小步开发并 commit + push
-=======
-BiologyAdvisor - 17-生物-Biology 行业 Web 项目
->>>>>>> github/main
