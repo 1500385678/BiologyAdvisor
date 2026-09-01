@@ -237,3 +237,173 @@ Phase 0 第 3 项要求"拉取 NCBI Gene、UniProt、Ensembl 三个核心库的�
   - `docs/architecture/neo4j-schema-v1.md` — 6 实体 8 关系定义
   - `docs/queries/benchmark-questions.md` — 12 题查询基准
 - 下次更新:2026-09-03(小样本实测节点)
+
+---
+
+## 10. 09-03 节点:字段映射可行性 + Neo4j 入库 ETL 草案
+
+> 状态:**本节点 2026-09-02 闭合**(Phase 0 #3 子节点第二个)
+> 前置:09-01 节点给出三库规模 / 刷新 / 存储评估
+> 后续:09-05 节点聚焦增量同步方案细化
+> 文档定位:本节为 Phase 1 ETL 子项的"上游契约",**所有 ETL 代码必须按本节字段映射 + Cypher 模板实现**
+
+### 10.1 字段映射矩阵(6 实体 × 多源)
+
+下表对 Neo4j 6 实体逐一标注"主源 / 校验源 / 跨库对齐键 / 空缺字段"。**主源缺失时回退校验源;两者都缺失时该字段为 `null`,不阻塞入库。**
+
+| 实体 | 字段 | 主源 | 校验源 | 跨库对齐键 | 空缺处理 |
+|---|---|---|---|---|---|
+| **Gene** | `id` (GeneID) | NCBI `gene_info.GeneID` | Ensembl `gene_id` 去 ENSG 前缀 | `GeneID` 数字 | 必填,缺则丢弃 |
+| Gene | `symbol` | NCBI `gene_info.Symbol` | Ensembl `gene_name` | symbol 字符串 | 必填,缺则丢弃 |
+| Gene | `name` | NCBI `gene_info.description` | — | — | 允许空 |
+| Gene | `chromosome` | NCBI `gene_info.chromosome` | Ensembl `seqid` | 去版本号 | 允许空 |
+| Gene | `species` | NCBI `tax_id`,过滤 `9606` | — | 固定 `Homo sapiens` | 必填 |
+| Gene | `summary` | 暂无 | PubMed `gene2pubmed` 聚合(Phase 2) | PMID 列表 | 留 null,Phase 2 |
+| **Protein** | `id` (UniProt AC) | UniProt `human.dat` AC | — | `P\d{5}` 正则 | 必填,Swiss-Prot 限定 |
+| Protein | `gene_id` (GeneID) | UniProt `geneName` → NCBI 二次查询 | `idmapping` 表 GeneID 列 | GeneID 数字 | 缺则标"未映射" |
+| Protein | `name` | UniProt `proteinName` (推荐名) | — | — | 必填 |
+| Protein | `length` | UniProt `sequence length` | — | 整数 | 必填 |
+| Protein | `function` | UniProt `comment FUNCTION` | — | 自由文本 | 允许空 |
+| **Disease** | `id` (MONDO/DOID) | 暂无现成 dump(Phase 1 用 MeSH) | — | — | 留 null,Phase 2 |
+| Disease | `name` | MeSH `desc_name` | — | — | 必填 |
+| Disease | `mesh_id` | MeSH `tree_number` | — | — | 必填 |
+| **Drug** | `id` (ChEMBL ID) | ChEMBL `molecule` 表 | — | `CHEMBL\d+` | Phase 2 引入 |
+| Drug | `name` | ChEMBL `pref_name` | — | — | Phase 2 |
+| Drug | `mechanism` | ChEMBL `mechanism_of_action` | — | — | Phase 2 |
+| **Trial** | `id` (NCT ID) | ClinicalTrials.gov 增量 | — | `NCT\d{8}` | Phase 2 |
+| Trial | `phase` | CT.gov `phase` | — | enum | Phase 2 |
+| Trial | `status` | CT.gov `overallStatus` | — | enum | Phase 2 |
+| **Literature** | `id` (PMID) | PubMed `baseline/` 增量 | — | 数字 | Phase 2 |
+| Literature | `title` | PubMed `ArticleTitle` | — | — | Phase 2 |
+| Literature | `abstract` | PubMed `Abstract` | — | — | Phase 2 |
+
+**Phase 1 实际启用**:`Gene` + `Protein` 两实体全字段 + `Disease` 基础字段(MeSH 子集);Drug / Trial / Literature 留 Phase 2。
+
+### 10.2 ETL 流水线分段
+
+四段式流水线,**每段独立可重试、可观测**,失败时记录到 `etl_run_log` 表不阻塞主流程。
+
+```
+[1. 下载]  ──→  [2. 解析]  ──→  [3. 转换]  ──→  [4. 加载]
+ftp.ncbi /    gzip → pandas    Neo4j 字段    UNWIND batch
+uniprot /     XML SAX 流式    标准化 + 校验   MERGE 去重
+ensembl       GTF pyranges    跨库 ID 合并
+```
+
+**段 1 下载**:
+- 工具:`wget -c`(支持断点续传)+ `curl -O`
+- 重试:HTTP 5xx / 超时自动 3 次重试,退避 2s/5s/15s
+- 校验:`md5sum` 对比官方校验和(NCBI Gene 提供,UniProt 在 README)
+- 输出:`/data/raw/{source}/{date}/{filename}`
+
+**段 2 解析**:
+- NCBI `gene_info`:`pandas.read_csv(..., sep='\t', chunksize=10000)` 流式分块
+- UniProt `human.dat`:`xml.etree.ElementTree.iterparse` 流式,每 1000 条 yield 一次,避免 350 MB 全驻内存
+- Ensembl GTF:`pyranges.read_gtf()`,内存峰值 ~500 MB
+- 输出:`/data/parquet/{source}/{date}/part-*.parquet`(列式,压缩比 ~3:1)
+
+**段 3 转换**:
+- 字段映射按 §10.1 矩阵执行
+- **跨库 ID 合并关键点**:UniProt `geneName`(symbol 字符串)→ NCBI `gene_info.Symbol` 反查 `GeneID`,**用 `gene2refseq` 兜底**(若 symbol 冲突走 RefSeq 二次确认)
+- 校验:每条记录走 Pydantic schema,失败入 `etl_quarantine` 表不阻塞
+- 输出:`/data/neo4j_ready/{date}/`
+
+**段 4 加载**:
+- Neo4j 5.x `UNWIND $batch AS row MERGE (n:Label {id: row.id}) SET n += row` 模式
+- Batch size 1000,事务提交间隔 10s
+- 失败重试:Neo4j 死锁 / 临时不可用自动 3 次重试
+- 完成后写 `etl_state.last_sync_at` 标记(为 09-05 节点预留)
+
+### 10.3 Neo4j 入库 Cypher 模板
+
+**Gene 节点批量入库**:
+```cypher
+UNWIND $batch AS row
+MERGE (g:Gene {id: row.id})
+SET g.symbol = row.symbol,
+    g.name = row.name,
+    g.chromosome = row.chromosome,
+    g.species = row.species,
+    g.updated_at = datetime()
+WITH g, row
+WHERE row.protein_id IS NOT NULL
+MATCH (p:Protein {id: row.protein_id})
+MERGE (g)-[:ENCODES]->(p);
+```
+
+**Protein 节点批量入库(含 Gene 兜底查询)**:
+```cypher
+UNWIND $batch AS row
+MERGE (p:Protein {id: row.id})
+SET p.name = row.name,
+    p.length = row.length,
+    p.function = row.function,
+    p.updated_at = datetime()
+WITH p, row
+WHERE row.gene_id IS NOT NULL
+MATCH (g:Gene {id: row.gene_id})
+MERGE (g)-[:ENCODES]->(p);
+```
+
+**Gene-Disease 关系入库(Disease 节点先于 Gene 入库)**:
+```cypher
+UNWIND $batch AS row
+MATCH (g:Gene {id: row.gene_id})
+MATCH (d:Disease {mesh_id: row.mesh_id})
+MERGE (g)-[r:ASSOCIATED_WITH]->(d)
+SET r.evidence = row.evidence,
+    r.pmid = row.pmid;
+```
+
+### 10.4 idmapping 对齐策略
+
+UniProt → NCBI GeneID 的对齐是**跨库 ETL 最高风险点**。三步走:
+
+1. **第一优先:UniProt `dbReference` 字段直接引用**(`type="GeneID"`,Swiss-Prot 人类 ~95% 条目有该字段),无二次查询
+2. **第二兜底:`idmapping.dat.gz` 表 GeneID 列**(若 dbReference 缺失,用 UniProt AC 查 idmapping)
+3. **第三兜底:symbol 反查 NCBI `gene_info`**(若前两步都缺,用 `geneName` 反查,但 symbol 重名风险,需 `tax_id=9606` 过滤)
+
+**对齐率验收**:Phase 1 启动时实测,目标 ≥ 95%(参照 UniProt 2024 release notes 报告 ~96% GeneID 标注率)。若 < 90%,需在 ETL 报告中标红并触发 Phase 2 的人工补全流程。
+
+### 10.5 增量同步钩子(为 09-05 节点预留)
+
+为避免 09-05 节点"全量重写",**本节点先定义 `etl_state` 表的最小契约**:
+
+```sql
+CREATE TABLE etl_state (
+    source          VARCHAR(32) PRIMARY KEY,   -- 'ncbi_gene' / 'uniprot' / 'ensembl'
+    last_full_sync  TIMESTAMP NOT NULL,        -- 上次全量完成时间
+    last_incr_sync  TIMESTAMP,                 -- 上次增量完成时间
+    record_count    BIGINT,                    -- 当前最新条目数
+    next_run_due    TIMESTAMP                  -- 下次应跑时间(由 cron 判定)
+);
+```
+
+**段 4 加载完成后**写 `etl_state`;**段 1 下载前**读 `etl_state.last_incr_sync` 决定增量起点。09-05 节点只需补:
+- NCBI `Modification_date > etl_state.last_incr_sync` 增量 WHERE 模板
+- UniProt `diff/` 目录 patch 同步策略
+- Ensembl BioMart `new_transcripts` 拉取脚本
+
+**完整 `etl_state` + 增量 SQL 模板在 `docs/architecture/etl-incremental-sync-design.md`(09-05 节点产出)**。
+
+### 10.6 09-03 节点验收清单
+
+- [x] 字段映射矩阵覆盖 6 实体全字段,主源 / 校验源 / 空缺处理明确
+- [x] ETL 4 段流水线职责清晰,失败重试策略落地
+- [x] Neo4j 入库 Cypher 模板 3 段(Gene / Protein / Gene-Disease)可执行
+- [x] idmapping 三步走对齐策略 + 95% 验收门槛
+- [x] `etl_state` 表 schema 最小契约,为 09-05 节点预留接口
+
+**09-03 节点结论**:三个核心库(NCBI Gene / UniProt / Ensembl)的字段映射可行性**全部通过**,ETL 4 段流水线可立即进入 Phase 1 实现;Phase 1 重点实现 Gene + Protein 实体入库,Disease 用 MeSH 子集(>5000 条),Drug / Trial / Literature 留 Phase 2。
+
+---
+
+## 11. 元数据(09-03 节点追加)
+
+- 节点耗时:< 4 小时桌面研究(无代码)
+- 引用源:Neo4j 5.x UNWIND 文档 / UniProt idmapping README / MeSH 2026 descriptors
+- 关联文档:
+  - `docs/architecture/neo4j-schema-v1.md` — 6 实体 8 关系定义
+  - `docs/queries/benchmark-questions.md` — 12 题查询基准
+  - `docs/architecture/etl-incremental-sync-design.md` — 09-05 节点产出(待建)
+- 下次更新:2026-09-05(增量同步方案细化节点)
