@@ -1,0 +1,11 @@
+# BiologyAdvisor · Python 依赖
+#
+# Phase 0 收尾期(2026-09-04)最小集,只覆盖 FastAPI 骨架运行。
+# Phase 1 按需扩展,不要一次性把所有依赖钉死版本。
+
+# --- Web 框架 ---
+fastapi>=0.110,<0.120    # 路由 / OpenAPI / Pydantic 校验
+uvicorn[standard]>=0.27  # ASGI 服务器,含 watchgod 进程(开发期 --reload)
+
+# --- 数据校验 ---
+pydantic>=2.6,<3.0       # FastAPI 0.110+ 已要求 v2
