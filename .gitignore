@@ -3,3 +3,9 @@
 node_modules/
 .venv/
 __pycache__/
+
+# 凭证类(Phase 0 §5 #4 节点,2026-09-05 显式列出,虽 * 已包含)
+.env
+.env.*
+*.key
+*.pem/

@@ -1,0 +1,32 @@
+# BiologyAdvisor · ClinicalTrials.gov API 配置
+# 文件位置:BiologyWeb/config/clinicaltrials.yaml
+# 创建日期:2026-09-05(Phase 0 §5 #4 节点)
+# 依据:docs/architecture/api-keys-checklist.md §3.2
+# Phase 1 实施期:由 config loader 读取(base_url / user_agent / rate_limit / politeness)
+
+clinicaltrials:
+  # === 端点 ===
+  base_url: https://clinicaltrials.gov/api/v2
+
+  # === 用户代理(官方要求强 UA,匿名会被 429) ===
+  # 格式:"项目名/版本 (mailto:联系邮箱)"
+  # Phase 1 实施期请把联系邮箱改为真实可联系地址
+  user_agent: "BiologyAdvisor/0.1 (mailto:dev@biologyadvisor.cn)"
+
+  # === 速率限制(官方默认 50 req/min / IP) ===
+  rate_limit:
+    requests_per_minute: 50    # 不建议超过官方默认,留缓冲
+    burst: 5                   # 短时突发上限(防触发 429)
+    retry_after_429_seconds: 60 # 收到 429 后等待时间
+
+  # === 礼貌爬取策略 ===
+  politeness:
+    respect_robots_txt: true   # 跑前读 https://clinicaltrials.gov/robots.txt
+    sleep_between_pages_ms: 200 # 分页之间 sleep,减轻服务端压力
+    # 日均超过 10000 req 时,主动邮件 register@clinicaltrials.gov 报备(非强制但推荐)
+    high_volume_threshold_per_day: 10000
+
+  # === 默认查询参数(可选) ===
+  defaults:
+    page_size: 50              # v2 API 单页最大 100
+    fields: []                 # 留空 = 返回所有字段;Phase 1 按需收窄(如 ["protocolSection.identificationModule.nctId"])
