@@ -223,3 +223,67 @@ if __name__ == "__main__":
   - `docs/architecture/datasource-dump-eval.md` §2.3 NCBI 下载与刷新 / §3.3 UniProt 下载 / §4.3 Ensembl 下载
   - `docs/architecture/etl-incremental-sync-design.md` — 09-05 节点产出(待建,本清单为其前置)
 - 下次更新:2026-09-05(API Key 真申请节点)
+
+---
+
+## 9. 9-09 验证快照(顾问代理执行)
+
+> **目的**:9-08 巡检 §3 T2 P0 建议"哪怕 Key 未到也可输出'未配置 Key'明确信号"——本文档 §2.4 的 verify 脚本就绪后,顾问代理先跑一次以记录"Key 未配置"基线事实,主人申请 Key 后再跑一次对比"Key 生效"基线。**不动 §7 纪律(不提前勾 §5 #4 checkbox)**,仅追加"已跑过 verify"的事实快照。
+
+### 9.1 执行记录
+
+- **日期**:2026-09-09 03:40(cron T4 自动任务)
+- **执行人**:17-生物-Biology 顾问(cron T4)
+- **触发**:`.plan/20260909.md` 缺失,§5 #4 主人动作"申请 NCBI API Key"连续 5 天(9-05 ~ 9-09)未启动,9-08 巡检 §3 T2 明确建议先跑 verify 输出未配置信号
+
+**执行命令**:
+```bash
+python3 scripts/verify_ncbi_key.py
+echo "exit=$?"
+```
+
+**实际输出**(exit 1):
+```
+❌ NCBI_API_KEY 未设置;先在 NCBI 申请,再 export 或写入 ~/.zshrc
+```
+
+### 9.2 环境基线
+
+| 探测项 | 结果 | 探测方式 |
+|---|---|---|
+| `os.environ['NCBI_API_KEY']` | `None` | `python3 -c "import os; print(repr(os.environ.get('NCBI_API_KEY')))"` |
+| `BiologyWeb/.env` 文件 | 不存在 | `ls -la .env` → No such file or directory |
+| `.gitignore` 凭证类屏蔽 | ✅ 已就位 | 显式列出 `.env` + `.env.*` |
+| verify 脚本 exit code 语义 | ✅ 正确 | 0 = Key 生效 / 1 = Key 缺失或失效 |
+
+### 9.3 结论
+
+- ✅ **verify 脚本本身可用**:exit 1 明确区分"未配置"与"配置但失效"两种状态,后续 Key 到位后可直接复用同一脚本做"基线对比"(对比 9-09 快照 vs Key 到位后的"✅ Key 生效"快照)
+- ❌ **NCBI_API_KEY 仍未配置**:§5 #4 主人动作连续 5 天(9-05 ~ 9-09)未启动,9-08 巡检 §1 / §2 预警持续
+- ⏳ **§6 验收 checklist 8 项全部 `[ ]` 未变**:严格遵守 §7 "不要在没拿到 Key 的情况下提前勾选"纪律
+- 📌 **主人动作只差 1 步**:登录 NCBI 账号 → Settings → Create API Key → `export NCBI_API_KEY="..."` → 重跑本脚本,exit 应转 0
+
+### 9.4 后续路径
+
+| 触发事件 | 动作 | 涉及文件 |
+|---|---|---|
+| 主人 export Key 后重跑 verify 退出 0 | 追加 §10 "9-XX Key 到位快照"(结构对称本节) | `api-keys-checklist.md` |
+| verify 退出 0 后 | 走 §6 验收 checklist 8 项打勾 | `api-keys-checklist.md` §6 |
+| §6 全打勾后 | 走 §7 回填指引:`项目开发计划.md` §5 #4 `- [ ]` → `- [x]` + 末尾追加 `(2026-09-XX 完成 ...)` | `项目开发计划.md` §5 |
+| Key 申请后 NCBI 审核 1-3 个工作日 | Phase 1 第 1 周 NCBI Gene ETL 等 Key 启动 | `etl-incremental-sync-design.md`(待建) |
+
+### 9.5 关联
+
+- 9-08 巡检:`.Log/巡检-生物-20260908.md` §2 第 2 项 / §3 T2 P0 第 1 项
+- 9-09 巡检:`.Log/巡检-生物-20260909.md` §2 第 2 项 / §3 T2 P0 第 1 项
+- 历史建议(连续 5 天):主人只需做 1 个动作(API Key 真申请),其余可顾问独立完成
+- 阶段信号:Phase 0 收尾**延长期第 3 天**(9-06 → 9-09 实际延期 3 天,见 9-09 巡检 §1)
+
+---
+
+## 10. 元数据(v1.1 · 9-09 追加)
+
+- 9-09 增量:§9 验证快照(顾问代理执行,不动 §7 纪律,1 次 commit)
+- 文档版本:v1.0 → v1.1
+- 引用源(新增):9-08 / 9-09 巡检报告 §3 T2 P0 建议 + `scripts/verify_ncbi_key.py` 9-05 提交
+- 下次更新:主人 export NCBI_API_KEY 后 → §10 Key 到位快照 → §6 → §7 流程
