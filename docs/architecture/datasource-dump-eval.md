@@ -221,11 +221,11 @@ Phase 0 第 3 项要求"拉取 NCBI Gene、UniProt、Ensembl 三个核心库的�
 
 ### 8.3 09-05 节点 TODO(增量同步方案细化)
 
-- [ ] 设计 `ETLSyncState` PostgreSQL 表(记录每个数据源的最后同步时间戳)
-- [ ] 设计 NCBI Gene 增量 WHERE 条件
-- [ ] 设计 UniProt 8 周 patch 同步流程
-- [ ] 设计 Ensembl 4 月全量 + 2 周 BioMart 增量流程
-- [ ] 输出 `docs/architecture/etl-incremental-sync-design.md` 完整方案
+- [x] 设计 `ETLSyncState` PostgreSQL 表(记录每个数据源的最后同步时间戳)
+- [x] 设计 NCBI Gene 增量 WHERE 条件
+- [x] 设计 UniProt 8 周 patch 同步流程
+- [x] 设计 Ensembl 4 月全量 + 2 周 BioMart 增量流程
+- [x] 输出 `docs/architecture/etl-incremental-sync-design.md` 完整方案(2026-09-10 闭合,见 `docs/architecture/etl-incremental-sync-design.md` 全文,11 列 etl_state + 3 库增量策略 + 跨库 ID 一致性 + 调度窗口 + 9 项验收 checklist)
 
 ---
 
@@ -398,12 +398,12 @@ CREATE TABLE etl_state (
 
 ---
 
-## 11. 元数据(09-03 节点追加)
+## 11. 元数据(09-03 节点追加,9-10 节点更新)
 
-- 节点耗时:< 4 小时桌面研究(无代码)
+- 节点耗时:< 4 小时桌面研究(09-03)· 09-10 节点再花 1 次 cron T5 窗口完成增量方案
 - 引用源:Neo4j 5.x UNWIND 文档 / UniProt idmapping README / MeSH 2026 descriptors
 - 关联文档:
   - `docs/architecture/neo4j-schema-v1.md` — 6 实体 8 关系定义
   - `docs/queries/benchmark-questions.md` — 12 题查询基准
-  - `docs/architecture/etl-incremental-sync-design.md` — 09-05 节点产出(待建)
-- 下次更新:2026-09-05(增量同步方案细化节点)
+  - `docs/architecture/etl-incremental-sync-design.md` — 9-10 节点产出(v1.0 · 14 节,§8.3 五项 TODO 全部闭合)
+- 下次更新:Phase 1 实施期(预计 9-13 ~ 9-25)逐项打勾 `etl-incremental-sync-design.md` §10 checklist
